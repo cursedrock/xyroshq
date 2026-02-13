@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Donate</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    <script src="https://js.stripe.com/v3/"></script>
+    <style>
+      /* Optional fallback styles if your CSS doesn’t style the card field well */
+      .card-element {
+        padding: 12px;
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+      }
+      .status-message--error {
+        color: #ff6b6b;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <section class="card">
+        <div class="card__header">
+          <h1>Support our work</h1>
+          <p>Secure, fast donation checkout.</p>
+        </div>
+
+        <form id="donation-form">
+          <label class="field">
+            <span>Email</span>
+            <input
+              id="email"
+              type="email"
+              placeholder="you@example.com"
+              autocomplete="email"
+              required
+            />
+          </label>
+
+          <label class="field">
+            <span>Amount (USD)</span>
+            <input
+              id="amount"
+              type="number"
+              step="0.01"
+              min="1"
+              placeholder="25.00"
+              required
+            />
+          </label>
+
+          <label class="field">
+            <span>Card</span>
+            <div id="card-element" class="card-element"></div>
+          </label>
+
+          <button id="submit-button" type="submit">Donate</button>
+          <p id="status-message" class="status-message" role="status"></p>
+        </form>
+      </section>
+    </main>
+
+    <script>
+      // IMPORTANT:
+      // Make sure this is rendered by Flask.
+      // If testing without Flask templating, temporarily hardcode your test key:
+      // const stripe = Stripe("pk_test_XXXXXXXXXXXXXXXX");
+      const stripe = Stripe("{{ publishable_key }}");
+
+      const elements = stripe.elements();
+      const cardElement = elements.create("card", {
+        style: {
+          base: {
+            color: "#ffffff",
+            backgroundColor: "transparent",
+            fontFamily: "Inter, system-ui, sans-serif",
+            fontSize: "16px",
+            "::placeholder": { color: "#9aa3b2" },
+            iconColor: "#9aa3b2",
+          },
+          invalid: {
+            color: "#ff6b6b",
+            iconColor: "#ff6b6b",
+          },
+        },
+      });
+
+      cardElement.mount("#card-element");
+
+      const form = document.getElementById("donation-form");
+      const statusMessage = document.getElementById("status-message");
+      const submitButton = document.getElementById("submit-button");
+
+      const setStatus = (message, isError = false) => {
+        statusMessage.textContent = message;
+        statusMessage.classList.toggle("status-message--error", isError);
+      };
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        setStatus("");
+        submitButton.disabled = true;
+
+        const email = document.getElementById("email").value.trim();
+        const amount = document.getElementById("amount").value.trim();
+
+        try {
+          const { paymentMethod, error } = await stripe.createPaymentMethod({
+            type: "card",
+            card: cardElement,
+            billing_details: { email },
+          });
+
+          if (error) {
+            setStatus(error.message, true);
+            return;
+          }
+
+          const response = await fetch("/create-payment-intent", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              amount,
+              email,
+              payment_method_id: paymentMethod.id,
+            }),
+          });
+
+          const result = await response.json();
+
+          if (result.status === "declined") {
+            setStatus(
+              result.decline_code
+                ? `❌ ${result.decline_code}`
+                : `❌ ${result.message || "Card declined"}`,
+              true
+            );
+            return;
+          }
+
+          if (result.status === "true") {
+            setStatus("✅ Donation successful!");
+            form.reset();
+            cardElement.clear();
+            return;
+          }
+
+          setStatus(result.message || "❌ Payment failed.", true);
+        } catch (e) {
+          setStatus("❌ Network or server error", true);
+        } finally {
+          submitButton.disabled = false;
+        }
+      });
+    </script>
+  </body>
+</html>
